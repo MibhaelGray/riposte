@@ -22,7 +22,7 @@ Then open <http://localhost:8123>.
 | W / S or ↑ / ↓ | Raise / lower your guard (high, mid, low) |
 | Space or Z | Jump (DOWN + J in the air plunges) |
 | S S (tap DOWN twice) | Drop through the ledge you're standing on |
-| J or X | Thrust (hold to feint) |
+| J or X | Thrust (hold to feint). Without a sword: a random punch or kick, and three blows knock someone out |
 | U | Slash |
 | L or I | Heavy lunge |
 | O | Parry. Answer with J for the riposte |

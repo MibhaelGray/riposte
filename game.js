@@ -97,6 +97,13 @@ const sfx = {
   disarm() { tone(700, 0.08, 'square', 0.05, 700); tone(1800, 0.25, 'triangle', 0.04, -600, 0.03); },
   throw() { noise(0.12, 0.08, 1800); tone(500, 0.1, 'triangle', 0.03, 300); },
   punch() { noise(0.08, 0.15, 350); tone(110, 0.08, 'square', 0.05, -40); },
+  strike(k) {
+    if (k === 'slap') { noise(0.05, 0.22, 3200); tone(950, 0.05, 'square', 0.03, -400); }
+    else if (k === 'upper') { noise(0.1, 0.18, 520); tone(130, 0.16, 'square', 0.05, 260); }
+    else if (k === 'front' || k === 'round') { noise(0.15, 0.22, 240); tone(78, 0.16, 'sine', 0.1, -30); }
+    else { noise(0.07, 0.16, 420); tone(120, 0.07, 'square', 0.05, -40); }
+  },
+  ko() { noise(0.3, 0.26, 220); tone(62, 0.4, 'sine', 0.13, -25); tone(700, 0.25, 'triangle', 0.03, -500, 0.05); },
   thud() { noise(0.25, 0.22, 200); tone(70, 0.25, 'sine', 0.1, -30); },
   blink() { tone(900, 0.15, 'sine', 0.04, -700); tone(300, 0.2, 'sine', 0.04, 600, 0.05); },
   pickup() { tone(660, 0.06, 'square', 0.04); tone(990, 0.08, 'square', 0.04, 0, 0.05); },
@@ -444,6 +451,7 @@ function equip(c) {
 }
 const toasts = [];
 function toast(x, y, str, col) { toasts.push({ x, y, str, col, t: 0 }); }
+function comboToast(x, y, str, col) { for (let i = toasts.length - 1; i >= 0; i--) if (toasts[i].combo) toasts.splice(i, 1); toast(x, y, str, col); toasts[toasts.length - 1].combo = true; }   // each blow's name replaces the last
 let camX = 0, deaths = 0, kills = 0, timeF = 0, tick = 0;
 // duel camera: zoom and view-centre (in screen units, after horizontal scroll)
 const cam = { z: 1, cx: W / 2, cy: H / 2 };
@@ -864,20 +872,68 @@ function clash(a, b, kb = 2.2) {
   sparks((a.x + b.x) / 2, stanceY(a));
   sfx.clang(); freeze = 3; shake = 2;
 }
+// bare hands: J throws one of these at random (never the same twice running). Every landed blow, dive-kick
+// included, leaves a bruise; the third bruise is a knockout. Bruises fade one at a time if you stop landing them.
+const STRIKES = {
+  jab:   { name: 'JAB',        dur: 6,  hit: 2, reach: 8,  push: 0.3, lift: 0,   col: '#ffffff' },
+  slap:  { name: 'SLAP',       dur: 7,  hit: 3, reach: 7.5, push: 0.25, lift: 0,  col: '#ffaabe' },
+  upper: { name: 'UPPERCUT',   dur: 8,  hit: 4, reach: 7,  push: 0.15, lift: 2.1, col: '#ffe28c' },
+  front: { name: 'FRONT KICK', dur: 8,  hit: 4, reach: 10, push: 0.55, lift: 0,   col: '#aae1ff', kick: true },
+  round: { name: 'ROUNDHOUSE', dur: 10, hit: 6, reach: 10.5, push: 0.65, lift: 0.9, col: '#ff9664', kick: true },
+};
+const STRIKE_KEYS = Object.keys(STRIKES), BIG_STRIKES = ['upper', 'front', 'round'];
+function startStrike(f) {
+  // the blow that would knock them out is always one of the big ones
+  const foes = f.team === 'player' ? enemies : [player];
+  const t = foes.find(o => !o.dead && (o.x - f.x) * f.facing > -2 && Math.abs(o.x - f.x) < 16 && f.y - o.y < 22 && o.y - f.y < 10);   // (one popped up by an uppercut still counts)
+  const pool = (t && (t.bruise || 0) >= 2 ? BIG_STRIKES : STRIKE_KEYS).filter(k => k !== f.lastStrike);
+  const k = pool[Math.floor(Math.random() * pool.length)], st = STRIKES[k];
+  f.strikeK = f.lastStrike = k; f.punch = st.dur; f.strikeAt = st.dur - st.hit; f.cool = st.dur; f.swoosh = [];
+  if (f.onGround) f.vx = f.facing * (st.kick ? 0.6 : 0.9);       // step into it, so a string of blows keeps up with them
+  sfx.swish();
+}
+function strikeExt(f) {      // 0 at rest, 1 at the moment of impact, easing back after
+  if (!(f.punch > 0) || !f.strikeK) return 0;
+  const st = STRIKES[f.strikeK], p = (st.dur - f.punch) / st.dur, h = st.hit / st.dur;
+  const e = p < h ? p / h : 1 - (p - h) / (1 - h);
+  return e * e * (3 - 2 * e);
+}
+function bruise(b, a, st, k) {
+  b.bruise = (b.bruise || 0) + 1; b.bruiseT = 0;
+  const isP = a === player, hx = b.x - a.facing * 2, hy = b.y - (st.kick && k === 'front' ? 9 : 13);
+  if (isP) { a.combo = a.comboT > 0 ? (a.combo || 0) + 1 : 1; a.comboT = 70; }
+  if (b.bruise >= 3) {      // knockout
+    b.bruise = 0; kill(b, a.facing);
+    if (b.dead) { if (st.lift) b.vy = Math.min(b.vy, -3.6); sfx.ko(); }
+    impact(hx, hy, st.col, 26); burst(hx, hy, 14, st.col, 2.4, 16, 0); shake = 6; freeze = Math.max(freeze, 7);
+    if (isP) comboToast(b.x, b.y - 30, (a.combo > 2 ? a.combo + ' HIT  ' : '') + 'KNOCKOUT', '#ffe39a');
+    return;
+  }
+  return true;
+}
 function unarmedHits(a, b) {
   if (a.dead || b.dead) return;
-  if (a.punch === 6) {
-    const px = a.x + a.facing * 7, py = a.y - 12, bb = bodyBox(b);
-    if (pointIn(px, py, bb) || (b.down > 0 && Math.abs(b.x - px) < 7)) {
-      if (b.down > 0 || b.stun > 0 || b.over > 0) kill(b, a.facing);
-      else { b.stun = 28; b.vx = a.facing * 2.2; clearActions(b); sfx.punch(); burst(px, py, 6, '#ffffff', 1.5, 10, 0); shake = 2; }
+  if (a.punch > 0 && a.strikeK && a.punch === a.strikeAt) {
+    const k = a.strikeK, st = STRIKES[k], ahead = (b.x - a.x) * a.facing;
+    if (ahead > -1 && ahead < st.reach + 3 && a.y - b.y < (b.onGround ? 10 : 20) && b.y - a.y < 10 && b.roll <= 0 && !(b.invuln > 0)) {
+      const hx = b.x - a.facing * 2, hy = a.y - (k === 'front' ? 8 : k === 'upper' ? 14 : 12);
+      sfx.strike(k);
+      if (bruise(b, a, st, k)) {
+        b.stun = b.T && b.T.boss ? 10 : 18; clearActions(b); b.flash = 5;
+        b.vx = a.facing * st.push; if (st.lift) { b.vy = -st.lift; b.onGround = false; }
+        burst(hx, hy, st.kick ? 9 : 6, st.col, st.kick ? 2 : 1.5, 11, 0); impact(hx, hy, st.col, st.kick ? 16 : 11);
+        shake = st.kick ? 3 : 2; freeze = Math.max(freeze, st.kick ? 3 : 2);
+        if (a === player) comboToast(b.x, b.y - 26, (a.combo > 1 ? a.combo + ' HIT  ' : '') + st.name, st.col);
+      }
     }
   }
   if (a.kick) {
     const bb = bodyBox(b);
     if (pointIn(a.x + a.facing * 3, a.y - 2, bb) || pointIn(a.x, a.y - 1, bb)) {
-      if (b.down > 0) kill(b, a.facing);
+      a.kick = false; a.vy = -2.6; a.vx = -a.facing * 1.2;
+      if (!bruise(b, a, { kick: true, lift: 0, col: '#ffffff' }, 'dive')) { sfx.punch(); }
       else {
+        if (a === player) comboToast(b.x, b.y - 26, (a.combo > 1 ? a.combo + ' HIT  ' : '') + 'DIVE KICK', '#ffffff');
         b.down = b.T && b.T.boss ? 30 : 55; b.vx = a.facing * 2.5; clearActions(b);
         if (b.armed && !(b.T && b.T.grip)) dropSword(b, a.facing);
         a.kick = false; a.vy = -2.6; a.vx = -a.facing * 1.2;
@@ -1024,7 +1080,7 @@ function control(f, inp) {
       }
     }
     else if (!f.onGround) { f.kick = true; f.vx = f.facing * 3; f.vy = Math.max(f.vy, 2.2); f.cool = 20; sfx.swish(); }
-    else { f.punch = 10; f.cool = 16; sfx.swish(); }
+    else startStrike(f);
   }
   if (inp.slashP && f.armed && f.cool <= 0) { if (f.onGround) scar(f.x + f.facing * rnd(9, 15), f.y); const st = !isP && f.T.slashTell ? Math.round(f.T.slashTell * (1 + 0.1 * rel('eye'))) : 0; f.slash = 18 + st; f.cool = (isP ? 22 : 30) + st; f.lunge = 0; f.did = true; if (st) sfx.tell(); else sfx.slash(); }   // some foes hold the blade high for a beat before the cut
   if (inp.heavyP && f.armed && f.onGround && f.cool <= 0) { const hm = f === player ? 0.85 ** rel('pommel') : 1, ht = f !== player && f.T && f.T.heavyTell ? Math.round(f.T.heavyTell * (1 + 0.1 * rel('eye'))) : 0; f.windup = Math.max(5, Math.round(14 * hm)) + ht; f.cool = Math.round(44 * hm) + ht; f.lunge = 0; f.vx = 0; f.did = true; sfx.charge(); }
@@ -1386,7 +1442,9 @@ function stepPlay() {
     if (f.parry > 0) f.parry--;
     if (f.cool > 0) f.cool--;
     if (f.rollCd > 0) f.rollCd--;
-    if (f.punch > 0) f.punch--;
+    if (f.punch > 0) f.punch--; else f.strikeK = null;
+    if (f.comboT > 0) f.comboT--;
+    if (f.bruise > 0 && ++f.bruiseT > 200) { f.bruise--; f.bruiseT = 140; }   // after a few quiet seconds, bruises fade one by one
     if (f.invuln > 0) f.invuln--;
     if (f.flash > 0) f.flash--;
     if (f.dead) f.deadT++;
@@ -2368,6 +2426,20 @@ function rig(f, X) {
   else if (f.hop > 0) { hipY = Y - 8.4 * s; fa = [X + d * 2.8 * s, Y - 1.0 * s]; fb = [X - d * 2.4 * s, Y - 2.0 * s]; lean = -0.14; }
   else if (f.over > 0) { hipY = Y - 6.0 * s; fa = [X + d * 6.4 * s, Y]; fb = [X - d * 4.6 * s, Y]; lean = 0.72; }
   else if (f.prep > 0) { const q = Math.min(1, f.prepT / 5); hipY = Y - (7.7 - 0.8 * q) * s; fa = [X + d * 2.6 * s, Y]; fb = [X - d * (2.4 + 1.2 * q) * s, Y]; lean = 0.05 - 0.24 * q; }
+  else if (f.punch > 0 && f.strikeK && f.onGround) {
+    const e = strikeExt(f), k = f.strikeK, st = STRIKES[k], p = (st.dur - f.punch) / st.dur, h = st.hit / st.dur;
+    hipY = Y - 7.7 * s; fa = [X + d * (2.4 + 0.8 * e) * s, Y]; fb = [X - d * (2.4 + 0.6 * e) * s, Y]; lean = 0.05;
+    if (k === 'jab') lean = 0.08 + 0.2 * e;
+    else if (k === 'slap') { lean = 0.12 * e - 0.06 * (1 - e); hipY += 0.3 * s; }
+    else if (k === 'upper') { const q = Math.min(1, p / h); hipY = Y - (6.3 + 2.4 * q * q) * s + (p > h ? 0.8 * (p - h) / (1 - h) * s : 0); lean = 0.32 - 0.6 * q + (p > h ? 0.2 * (p - h) / (1 - h) : 0); fa = [X + d * 3.0 * s, Y - (q > 0.6 ? 1.2 * s : 0)]; }
+    else if (k === 'front') { lean = -0.32 * e; fa = [X + d * (2.2 + 7.2 * e) * s, Y - 7.4 * e * s]; fb = [X - d * 1.8 * s, Y]; }
+    else if (k === 'round') {
+      // the kicking foot sweeps from behind, low under the body, and up to head height in front
+      const q = p < h ? p / h : 1 - 0.85 * (p - h) / (1 - h), th = 2.7 - 3.55 * q, r = 8.4 * s;
+      hipY = Y - 8.0 * s; lean = -0.5 * Math.min(1, q * 1.3);
+      fa = [X + d * Math.cos(th) * r, hipY + Math.min(7.7 * s, Math.sin(th) * r)]; fb = [X - d * 0.6 * s, Y];
+    }
+  }
   else if (f.lunge > 0) { const t = ext / (f.heavyL ? 12 : 6); hipY = Y - (7.7 - 1.6 * t) * s; fa = [X + d * (2.8 + t * 3.8) * s, Y]; fb = [X - d * (2.8 + t * 2.0) * s, Y]; lean = 0.2 + t * 0.4; }
   else if (spd > 0.25) {
     const ph = f.anim * 0.3 * clamp(spd / 1.2, 0.7, 1.5), sw = 2.5 * s, lift = 1.5 * s, dir = Math.sign(f.vx);
@@ -2410,8 +2482,18 @@ function handsFor(f, R) {
     if (Math.abs(f.vx) > 0.6 && f.onGround && !f.lunge) off = [X - d * 1.5 * s + Math.sin(f.anim * 0.3) * 1.6, Y - 9 * s];
     if (f.fling > 0) off = [X + d * (1 + (10 - f.fling) * 0.7) * s, Y - (13.5 - (10 - f.fling) * 0.25) * s];
   } else {
-    hand = f.punch > 3 ? [X + d * 7.2, Y - 12.4 * s] : [X + d * 3.2 * s, Y - 12.6 * s];
+    hand = [X + d * 3.2 * s, Y - 12.6 * s];
     off = [X + d * 2.0 * s, Y - 13.4 * s];
+    if (f.punch > 0 && f.strikeK) {
+      const e = strikeExt(f), k = f.strikeK, st = STRIKES[k], p = (st.dur - f.punch) / st.dur, h = st.hit / st.dur;
+      if (k === 'jab') { hand = [X + d * (3.2 + 4.6 * e) * s, Y - (12.6 - 0.3 * e) * s]; off = [X + d * 1.6 * s, Y - 13.6 * s]; }
+      else if (k === 'slap') {   // an open hand swung round from behind the shoulder
+        const q = p < h ? p / h : 1 + 0.4 * (p - h) / (1 - h), a = Math.PI * (1 - q) * 0.95;
+        hand = [R.sh[0] + d * Math.cos(a) * 6.8 * s, R.sh[1] + 1.2 * s - Math.sin(a) * 2.2 * s]; off = [X - d * 1.0 * s, Y - 11.4 * s];
+      }
+      else if (k === 'upper') { const q = Math.min(1, p / h); hand = [X + d * (2.2 + 2.6 * q) * s, Y - (7.4 + 10.4 * q * q - (p > h ? 3 * (p - h) / (1 - h) : 0)) * s]; off = [X + d * 1.4 * s, Y - 13.2 * s]; }
+      else { hand = [X - d * (1.2 + 2.2 * e) * s, Y - (12.2 + 1.6 * e) * s]; off = [X + d * (2.0 + 1.6 * e) * s, Y - (13.4 + 1.2 * e) * s]; }   // kicks: arms thrown out for balance
+    }
     if (f.fling > 0) off = [X + d * (1 + (10 - f.fling) * 0.7) * s, Y - (13.5 - (10 - f.fling) * 0.25) * s];
     if (f.pose === 2) { hand = [hand[0], hand[1] + 3.6 * s]; off = [off[0] - d * 0.5, off[1] + 3.6 * s]; }
     else if (f.pose === 0) { hand = [hand[0] - d * 0.6, hand[1] - 1.6 * s]; off = [off[0], off[1] - 1.8 * s]; }
@@ -2768,6 +2850,26 @@ function drawFighter(f) {
     glowAt(ex, ey, 1.8, hexRgb(look.eye).join(','), 0.6);
     ctx.fillStyle = 'rgba(255,255,255,0.9)'; circle(ex, ey, 0.22);
     ctx.globalCompositeOperation = 'source-over';
+  }
+  if (!f.armed && f.punch > 0 && f.strikeK && !silh) {
+    const st = STRIKES[f.strikeK], tip = st.kick ? [R.ka[2], R.ka[3]] : [hand[2], hand[3]];
+    const sw = f.swoosh || (f.swoosh = []);
+    if (!sw.length || Math.hypot(sw[sw.length - 1][0] - tip[0], sw[sw.length - 1][1] - tip[1]) > 0.3) sw.push(tip);
+    if (sw.length > 9) sw.shift();
+    if (f.strikeK !== 'jab' && sw.length > 2) {
+      ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+      for (let i = 1; i < sw.length; i++) {
+        const t = i / sw.length; ctx.strokeStyle = rgba(st.col, 0.5 * t); ctx.lineWidth = 0.3 + 1.8 * t;
+        line(sw[i - 1][0], sw[i - 1][1], sw[i][0], sw[i][1]);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (strikeExt(f) > 0.9) { ctx.globalCompositeOperation = 'lighter'; glowAt(tip[0], tip[1], 3, hexRgb(st.col).join(','), 0.55); ctx.globalCompositeOperation = 'source-over'; }
+  } else if (f.swoosh && f.swoosh.length) f.swoosh.length = 0;
+  // bruises: three marks over the head, one filled for each blow taken; the third is a knockout
+  if (f.bruise > 0 && !silh) for (let i = 0; i < 3; i++) {
+    const bx = f.x + (i - 1) * 2.4, by = f.y - f.h - (f.T && f.T.elite ? 10 : 6.5);
+    ctx.fillStyle = i < f.bruise ? (f.bruise === 2 ? '#ff5a4a' : '#ffb04a') : 'rgba(255,255,255,0.22)'; circle(bx, by, 0.8);
   }
   if (f.stun > 0) stars(R.head[0], R.head[1] - 2.6, f.anim);
   if (f.flash > 0) { ctx.globalCompositeOperation = 'lighter'; glowAt(f.x, f.y - 9, 10, '255,255,255', 0.5 * f.flash / 8); ctx.globalCompositeOperation = 'source-over'; }
@@ -3128,7 +3230,7 @@ const CONTROL_LINES = [
   ['SPACE jump · S S drop down · air ↓+J plunge', 'SHIFT  hop back · +A D: roll (untouchable)'],
   ['K   throw your blade', 'walk over a loose sword to wield two'],
   ['E   hurl a nearby pot, stool or lantern', 'a hit stuns: close in and finish it'],
-  ['unarmed:  J punch · midair J dive-kick', 'unarmed:  hold S duck · hold W rise'],
+  ['unarmed:  J punch or kick · air J dive-kick', '3 blows knock out · hold S duck, W rise'],
 ];
 function drawControls(y0, dy) {
   const CW = W * S;

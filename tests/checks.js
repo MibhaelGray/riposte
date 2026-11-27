@@ -1139,3 +1139,57 @@ window.__results13 = null;
   keys.right = keys.down = false; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
   window.__results13 = R.join('\n');
 })();
+
+// ===== bare hands: random punches and kicks, three blows to a knockout (appended) =====
+window.__results14 = null;
+(async () => {
+  for (let i = 0; i < 3400 && !window.__results13; i++) await new Promise(r => setTimeout(r, 100));
+  buildsOn = false;
+  const R = []; const ok = (n, c, info = '') => R.push((c ? 'PASS ' : 'FAIL ') + n + (info ? '  [' + info + ']' : ''));
+  const clearP = () => { for (const k in pressed) pressed[k] = false; };
+  const origAI = aiInput;
+  const bout = (type = 'squire', armedFoe = false) => {
+    newGame(0); queue = []; enemies = []; for (let i = 0; i < 40; i++) step(); clearP(); slowmo = 0; freeze = 0;
+    player.armed = false; player.facing = 1; player.x += 60; player.invuln = 0;
+    const e = makeFighter(player.x + 9, GROUND, 'enemy', type); e.onGround = true; e.facing = -1; e.armed = armedFoe; enemies.push(e); return e;
+  };
+  window.aiInput = () => ({});
+  let exact = 0, kinds = {}, repeats = 0, bigKO = 0, frames = 0, err = '', N = 24;
+  for (let t = 0; t < N; t++) {
+    const e = bout(t % 2 ? 'duelist' : 'squire'); let seq = [], f = 0;
+    try { while (!e.dead && f < 300) { if (player.cool <= 0) pressed.attack = true; step(); clearP(); f++; if (player.strikeK && player.punch === STRIKES[player.strikeK].dur - 1) seq.push(player.strikeK); if (f % 4 === 0) render(); } } catch (x) { err = x.message; }
+    frames += f; if (e.dead && seq.length === 3) exact++; for (const k of seq) kinds[k] = (kinds[k] || 0) + 1;
+    for (let i = 1; i < seq.length; i++) if (seq[i] === seq[i - 1]) repeats++;
+    if (e.dead && BIG_STRIKES.includes(seq[seq.length - 1])) bigKO++;
+  }
+  ok('three blows knock a foe out', exact === N, exact + '/' + N);
+  ok('...in well under a second of mashing J', frames / N < 40, (frames / N).toFixed(0) + ' frames');
+  ok('the blows vary: punches, slaps, uppercuts and kicks', Object.keys(kinds).length === 5, JSON.stringify(kinds));
+  ok('...never the same blow twice running', repeats === 0, repeats + ' repeats');
+  ok('the knockout blow is always a big one (uppercut or kick)', bigKO === N, bigKO + '/' + N);
+  ok('every blow draws without errors', !err, err);
+  ok('a blow recovers twice as fast as the old punch', Object.values(STRIKES).reduce((a, s) => a + s.dur, 0) / 5 <= 8, 'avg ' + (Object.values(STRIKES).reduce((a, s) => a + s.dur, 0) / 5));
+
+  let e = bout(); pressed.attack = true; step(); clearP(); for (let i = 0; i < 12; i++) step();
+  ok('one blow bruises and staggers, it does not kill', e.bruise === 1 && !e.dead, 'bruise ' + e.bruise);
+  for (let i = 0; i < 400; i++) step();
+  ok('bruises fade if you stop landing blows', !e.bruise, 'bruise ' + e.bruise);
+
+  e = bout(); player.y = GROUND - 14; player.onGround = false; player.vy = 0; player.x = e.x - 14; pressed.attack = true; step(); clearP();
+  let n = 0; while (!player.onGround && n < 60) { step(); n++; }
+  ok('a dive-kick counts as one of the three', e.bruise === 1 && !e.dead && e.down > 0, 'bruise ' + e.bruise + ' down ' + e.down);
+
+  // foes' fists follow the same rule
+  e = bout(); player.armed = false; e.facing = -1; e.x = player.x + 9;
+  for (let i = 0; i < 2; i++) { e.x = player.x + 9; e.lastStrike = null; startStrike(e); for (let f = 0; f < 14; f++) step(); }   // (a real foe walks back into range)
+  ok('two blows from a foe leave you standing', !player.dead && player.bruise === 2, 'bruise ' + player.bruise);
+  e.x = player.x + 9; startStrike(e); for (let f = 0; f < 14; f++) step(); slowmo = 0; fin = null;
+  ok('...the third knocks you out', player.dead);
+
+  e = bout(); player.invuln = 0; keys.right = true; pressed.roll = true; bufAct = 'roll'; step(); clearP(); keys.right = false; e.facing = -1; e.x = player.x + 8;
+  startStrike(e); for (let f = 0; f < 10; f++) step();
+  ok('a roll slips under a blow too', !player.bruise && !player.dead, 'bruise ' + player.bruise);
+
+  window.aiInput = origAI; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
+  window.__results14 = R.join('\n');
+})();
