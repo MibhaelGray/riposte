@@ -162,7 +162,7 @@ const ZONES = [
     geo: z => { rect(z, GROUND, 114, 40); rect(z + 140, GROUND, 40, 40); rect(z + 206, GROUND, 114, 40); torches.push(z + 60, z + 260); } },
   { act: 0, name: 'The Gatehouse', enemies: ['squire', 'duelist', 'squire'], max: 2, weather: 'embers',
     story: 'Inside the gatehouse the portcullis has rusted open. The watch still changes on the hour.',
-    hint: 'TWO AT ONCE  ·  HURL A POT WITH E TO STUN ONE, THEN DEAL WITH THE OTHER',
+    hint: 'ONE FIGHTS, ONE WAITS HIS TURN  ·  HURL A POT WITH E TO STUN THE ONE WAITING',
     props: [[70, 'pot'], [122, 'stool'], [200, 'lantern'], [296, 'pot']],
     geo: z => { rect(z, GROUND, 320, 40); rect(z + 92, GROUND - 8, 154, 8); rect(z + 150, GROUND - 16, 96, 8); platforms.push({ x: z + 254, y: 124, w: 32 }); torches.push(z + 46, z + 302); } },
   { act: 0, name: 'The Tilt Yard', enemies: ['duelist', 'squire', 'duelist'], max: 2, weather: 'embers',
@@ -212,7 +212,7 @@ const ZONES = [
     geo: z => { rect(z, GROUND, 320, 40); rect(z + 60, GROUND - 8, 70, 8); rect(z + 84, GROUND - 16, 46, 8); rect(z + 190, GROUND - 8, 70, 8); rect(z + 190, GROUND - 16, 46, 8); platforms.push({ x: z + 130, y: GROUND - 16, w: 60 }); torches.push(z + 30, z + 290); } },
   { act: 2, name: "The Founders' Anvil", enemies: ['hammer', 'tongs'], max: 2, weather: 'embers',
     story: 'Two brothers cast the Bell of Asher. They quarrelled over everything except who would be allowed to ring it.',
-    hint: 'TWO AT ONCE: THE HAMMER HITS HARD, THE TONGS IS QUICK  ·  STUN ONE AND FIGHT THE OTHER',
+    hint: 'THE HAMMER HITS HARD, THE TONGS IS QUICK  ·  THEY TRADE PLACES, SO WATCH WHO STEPS IN',
     props: [[44, 'pot'], [100, 'lantern'], [220, 'lantern'], [276, 'pot']],
     geo: z => { rect(z, GROUND, 320, 40); rect(z + 130, GROUND - 9, 60, 9); platforms.push({ x: z + 52, y: 122, w: 40 }, { x: z + 228, y: 122, w: 40 }); torches.push(z + 30, z + 290); } },
   { act: 3, title: 'ACT IV — ABOVE THE STORM', name: 'The White Parapet', enemies: ['reaver', 'reaver'], max: 1, weather: 'snow',
@@ -321,7 +321,8 @@ const TIER_NAME = ['COMMON', 'RARE', 'LEGENDARY'], TIER_COL = ['#e8e2d4', '#5ad0
 function rel(id) { return (buildsOn && !practice && relics[id]) || 0; }
 function threat() { return buildsOn && !practice ? zi : 0; }
 function zoneBoss(i = zi) { return ZONES[i].enemies.some(t => TYPES[t].boss); }
-function zoneMax() { return ZONES[zi].max + (threat() >= 9 && !zoneBoss() && ZONES[zi].max < 3 ? 1 : 0); }
+function zoneMax() { return ZONES[zi].max; }   // never a crowd: higher landings send sharper foes, not more at once
+function extraFoes() { return Math.min(2, Math.floor(threat() / 7)); }
 // three to choose from: commons early, more rares the higher you climb, legendaries from a boss
 function rollOffer() {
   const boss = zoneBoss(), out = [];
@@ -400,6 +401,7 @@ function scaleFoe(e) {
 // ---------- game state ----------
 let state = 'title';
 let zi = 0, cleared = false, queue = [], spawnT = 0;
+let leadFoe = null, foeThrowT = 0, lastAlive = 0;   // one foe presses the fight at a time; the rest wait their turn
 let player = null, enemies = [], swords = [], projs = [], parts = [], loot = [];
 let props = [];   // pots, stools, bottles, skulls and lanterns lying about: press E beside one to hurl it at the nearest foe
 // ---- cosmetics looted from fallen foes (kept between runs) ----
@@ -550,10 +552,10 @@ function startZone(i) {
   zi = i;
   resetProps();
   queue = practice ? [practiceFoe] : ZONES[i].enemies.slice();
-  if (threat() && queue.length && !zoneBoss(i)) for (let n = Math.min(3, Math.floor(threat() / 5)); n > 0; n--) queue.push(ZONES[i].enemies[Math.floor(Math.random() * ZONES[i].enemies.length)]);   // the higher the landing, the more of them
+  if (threat() && queue.length && !zoneBoss(i)) for (let n = extraFoes(); n > 0; n--) queue.push(ZONES[i].enemies[Math.floor(Math.random() * ZONES[i].enemies.length)]);   // the higher the landing, the more of them
   wardLeft = rel('ward'); pickAt = 0; bolts = [];
   if (rel('spare') && player && player.armed) player.offhand = true;
-  cleared = queue.length === 0;
+  cleared = queue.length === 0; leadFoe = null; foeThrowT = 0; lastAlive = 0;
   spawnT = i === 0 ? 100 : 50;
   bannerT = ZONES[i].title ? 200 : 150;
   spawnCrows(i);
@@ -606,8 +608,9 @@ function physics(e, w, h) {
   e.y += e.vy; e.onGround = false;
   for (const s of solids) {
     if (overlapR(e.x - w / 2, e.y - h, w, h, s)) {
-      if (e.vy > 0) { e.y = s.y; e.onGround = true; } else { e.y = s.y + s.h + h; }
-      e.vy = 0;
+      if (e.vy > 0) { e.y = s.y; e.onGround = true; e.vy = 0; }
+      else if (prevY - h >= s.y + s.h - 1) { e.y = s.y + s.h + h; e.vy = 0; }      // a real ceiling: bump your head on it
+      else { e.x = e.x < s.x + s.w / 2 ? s.x - w / 2 : s.x + s.w + w / 2; e.hitWall = true; }   // shoved into its side: step out, never down through the floor
     }
   }
   if (e.vy >= 0) {
@@ -1026,12 +1029,23 @@ function control(f, inp) {
   if (inp.parryP && f.armed && f.cool <= 0) { f.parry = f === player && rel('bell') ? 16 : 10; f.cool = isP ? 20 : 26; f.lunge = 0; f.did = true; }
   if (inp.throwP && f.armed && f.cool <= 0) {
     projs.push({ x: f.x + f.facing * 6, y: stanceY(f), vx: f.facing * 5.5, team: f.team, life: 80 });
+    if (f.team !== 'player') foeThrowT = 150;
     if (f.offhand) { f.offhand = false; f.cool = 12; sfx.throw(); }
     else { f.armed = false; f.unarmedT = 0; f.cool = 16; clearActions(f); sfx.throw(); }
   }
 }
 
 // ---------- AI ----------
+// a duel, not a brawl: only the foe nearest you presses the attack. The others hold off at a distance,
+// keep their guard up, and step in when the one in front of you falls, loses his blade or is left behind.
+function pickLead() {
+  const live = enemies.filter(e => !e.dead && !e.T.dummy && !e.T.drill);
+  if (live.length < 2) { leadFoe = live[0] || null; return; }
+  const d = e => Math.abs(e.x - player.x) + Math.abs(e.y - player.y) * 0.5 + (e.armed ? 0 : 80) + (e.entering ? 40 : 0);
+  let best = live[0]; for (const e of live) if (d(e) < d(best)) best = e;
+  if (!leadFoe || !live.includes(leadFoe) || d(best) < d(leadFoe) - 18) leadFoe = best;
+}
+function waitingTurn(e) { return !!leadFoe && leadFoe !== e && !leadFoe.dead && enemies.includes(leadFoe); }
 function otherStance(s) { const o = [0, 1, 2].filter(v => v !== s); return o[Math.floor(Math.random() * o.length)]; }
 function nearestSword(e) {
   let best = null, bd = 1e9;
@@ -1063,6 +1077,7 @@ function aiInput(e) {
   }
   if (e.stanceCd > 0) e.stanceCd--;
   const dx = p.x - e.x, dist = Math.abs(dx), dir = dx >= 0 ? 1 : -1;
+  const waiting = waitingTurn(e);
   let move = 0;
   const steer = s => {
     if (e.stanceCd > 0 || !e.armed) return;
@@ -1073,7 +1088,7 @@ function aiInput(e) {
   const canHop = () => e.onGround && e.rollCd <= 0 && groundBelow(e.x - e.facing * 22, e.y) && e.x - e.facing * 22 > zoneL() + 6 && e.x - e.facing * 22 < zoneR() - 6;
 
   // shades step through the dark to land behind you
-  if (T.blink && e.armed && e.onGround && ++e.blinkT > 170 && dist < 160 && p.onGround) {
+  if (T.blink && !waiting && e.armed && e.onGround && ++e.blinkT > 170 && dist < 160 && p.onGround) {
     const nx = p.x - p.facing * 20;
     if (nx > zoneL() + 8 && nx < zoneR() - 8 && groundBelow(nx, p.y) && !solidAt(nx, p.y - 2) && !solidAt(nx, p.y - 12)) {
       burst(e.x, e.y - 9, 16, T.accent, 1.3, 26, -0.02);
@@ -1135,7 +1150,12 @@ function aiInput(e) {
     let target = e.plan === 'attack' || T.drill ? (T.atk || 34) : T.range;
     if (!p.armed) target = 28;
     if (p.down > 0 || p.stun > 0) target = 22;
+    if (waiting) target = Math.max(target, 74);      // waiting a turn: out of the fight, but close enough to step in
     if (dist > target + 3) move = dir; else if (dist < target - 3) move = -dir;
+    if (!waiting && e.onGround && p.onGround && p.y - e.y > 8 && dist >= 12 && dist < 70) move = dir;   // on a ledge above you: come down to fight, not hover out of reach
+    // standing on a gallery right over your head: drop through it to your floor
+    if (!waiting && e.onGround && p.onGround && p.y - e.y > 8 && dist < 40 && Math.random() < 0.04 && !solidAt(e.x, e.y + 1) &&
+        platforms.some(q => Math.abs(q.y - e.y) < 1 && e.x > q.x && e.x < q.x + q.w)) { e.y += 1; e.onGround = false; e.vy = 0.5; return inp; }
 
     // just parried: a trained blade tries to parry the riposte it knows is coming. Strike at once and it is too
     // late for them; hesitate and they catch it (or wait out their parry and then strike).
@@ -1162,7 +1182,8 @@ function aiInput(e) {
     if (T.drill) e.drillT = (e.drillT || 0) + 1;
 
     const bracing = e.dodgeW && p.windup > 0;      // has read your heavy lunge and is waiting to parry it
-    if (e.cool <= 0 && !respParry && !inp.hopP && !bracing) {
+    const inbound = projs.some(q => q.team !== 'player' && Math.abs(q.x - p.x) < 100);   // a knife already on its way: let it be answered first
+    if (e.cool <= 0 && !respParry && !inp.hopP && !bracing && !waiting && !(inbound && !T.boss)) {
       const level = e.onGround && Math.abs(p.y - e.y) < 8;
       // where to strike: any line your blade is not on (an unarmed target can only duck, rise or get away)
       const aim = () => { if (!p.armed) return p.down > 0 ? 2 : Math.floor(Math.random() * 3); return otherStance(p.stance); };
@@ -1181,7 +1202,10 @@ function aiInput(e) {
       else if (p.armed && !pOpen && dist < 25 && e.stance !== p.stance && canHop() && Math.random() < (T.hop || 0) * 0.1) inp.hopP = true;
     }
     if (respParry) { inp.parryP = true; inp.attackP = inp.slashP = inp.heavyP = false; }
-    if (T.throws && e.cool <= 0 && dist > 45 && dist < 150 && e.stance !== p.stance && Math.abs(p.y - e.y) < 6 && Math.random() < 0.012) inp.throwP = true;
+    // a knifer waiting his turn may still throw, but only while the foe in front of you is not mid-attack, and never
+    // with another blade already in the air: one thing to answer at a time
+    const lull = !waiting || (!(leadFoe.prep > 0 || leadFoe.windup > 0 || leadFoe.lunge > 0 || leadFoe.slash > 0) && (leadFoe.cool > 8 || Math.abs(leadFoe.x - p.x) > 44 || leadFoe.stun > 0 || !leadFoe.armed));
+    if (T.throws && lull && (T.boss || foeThrowT <= 0) && !projs.some(q => q.team !== 'player') && e.cool <= 0 && dist > 45 && dist < 150 && e.stance !== p.stance && Math.abs(p.y - e.y) < 6 && Math.random() < (waiting ? 0.05 : T.boss ? 0.03 : 0.012)) inp.throwP = true;   // waiting knifers seize the brief lulls
   }
 
   if (move && e.onGround) {
@@ -1317,6 +1341,7 @@ function stepPlay() {
   control(player, pin);
   if (player.did || player.dead) bufAct = null; else if (bufAct && --bufT <= 0) bufAct = null;
   if (bufJump > 0) { bufJump--; if (wasGround && !player.onGround) bufJump = 0; }
+  pickLead(); if (foeThrowT > 0) foeThrowT--;
   for (const e of enemies) {
     if (e.entering) {      // the run-in ends near you, or as soon as there is a step or a gap ahead to judge
       const ed = player.x >= e.x ? 1 : -1;
@@ -1458,6 +1483,8 @@ function stepPlay() {
   if (!player.dead) {
     if (!cleared) {
       const alive = enemies.filter(e => !e.dead).length;
+      if (alive < lastAlive && alive > 0 && !practice) spawnT = Math.max(spawnT, 50);   // one falls while another still stands: a breath before his replacement (an empty landing refills at once)
+      lastAlive = alive;
       if (queue.length && alive < zoneMax() && --spawnT <= 0) {
         const mid = zi * ZW + ZW / 2, far = player.x < mid ? (zi + 1) * ZW - 26 : zi * ZW + 26, NT = TYPES[queue[0]];
         // foes walk in from the far end of the zone (the practice dummy simply stands at its mark)
@@ -1469,7 +1496,7 @@ function stepPlay() {
         e.facing = player.x > x ? 1 : -1;
         enemies.push(e);
         if (e.T.line) { speech = { who: e.T.name, text: e.T.line, t: 300, col: e.T.accent }; sfx.boss(); }
-        spawnT = 30;
+        spawnT = 30; lastAlive++;
       }
       if (!queue.length && alive === 0 && enemies.every(e => e.dead)) { cleared = true; sfx.clear(); if (buildsOn && !practice && zi > lastPickZone && zi < ZONES.length - 1) pickAt = 40; }
     } else if (zi < ZONES.length - 1 && player.x > (zi + 1) * ZW + 40) {
@@ -3128,7 +3155,7 @@ function drawTitle() {
   let g = ctx.createLinearGradient(0, 0, 0, CH);
   g.addColorStop(0, 'rgba(4,3,10,0.72)'); g.addColorStop(0.3, 'rgba(4,3,10,0.12)'); g.addColorStop(0.72, 'rgba(4,3,10,0)'); g.addColorStop(1, 'rgba(4,3,10,0.7)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, CW, CH);
-  const tx = CW * 0.4;
+  const tx = CW / 2;   // centred, in line with the practice button and the motto below
   text('RIPOSTE', tx + 4, 124, 104, 'rgba(0,0,0,0.6)', 'center', 1, SERIF);
   text('RIPOSTE', tx, 120, 104, '#f3ecdf', 'center', 1, SERIF);
   ctx.fillStyle = 'rgba(194,34,45,0.9)'; ctx.fillRect(tx - 150, 138, 300, 2);
@@ -3249,7 +3276,7 @@ function drawBuild() {
   ctx.fillStyle = 'rgba(6,3,12,0.88)'; ctx.fillRect(0, 0, CW, CH);
   text('YOUR BUILD', CW / 2, 70, 34, '#ffe9c0', 'center', 1, SERIF);
   const k = threat();
-  text(k ? `THREAT ${k + 1}:  foes react ${Math.round((1 - Math.max(0.6, 1 - 0.022 * k)) * 100)}% sooner, move ${Math.round(1.2 * k)}% faster` + (k >= 3 ? `, ${Math.round(Math.min(0.45, 0.06 * (k - 2)) * 100)}% are elites` : '') + (Math.floor(k / 5) ? `, ${Math.min(3, Math.floor(k / 5))} more per landing` : '') : 'THREAT 1:  the foes have not yet begun to harden', CW / 2, 96, 13, '#ff9a8a', 'center');
+  text(k ? `THREAT ${k + 1}:  foes react ${Math.round((1 - Math.max(0.6, 1 - 0.022 * k)) * 100)}% sooner, move ${Math.round(1.2 * k)}% faster` + (k >= 3 ? `, ${Math.round(Math.min(0.45, 0.06 * (k - 2)) * 100)}% are elites` : '') + (extraFoes() ? `, ${extraFoes()} more per landing` : '') : 'THREAT 1:  the foes have not yet begun to harden', CW / 2, 96, 13, '#ff9a8a', 'center');
   if (!relicOrder.length) { text('Nothing yet. Clear a landing and choose your first relic.', CW / 2, 250, 18, '#e6dccb', 'center', 1, SERIF); return; }
   const per = Math.ceil(relicOrder.length / 2), rowH = Math.min(50, 392 / Math.max(per, 1));
   relicOrder.forEach((id, i) => {

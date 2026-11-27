@@ -136,7 +136,7 @@ buildsOn = false;   // the older checks below test the bare game: no relics, no 
     for (let z = 0; z < ZONES.length && state === 'play'; z++) {
       let t = 0;
       while (zi === z && state === 'play' && t < 4000) {
-        t++; player.invuln = 5; if (player.onGround && ((t % 25 === 0 && groundBelow(player.x + 50, player.y) && groundBelow(player.x + 66, player.y)) || !groundBelow(player.x + 5, player.y))) pressed.jump = true;   // hops as it goes (never blind into a pit), and always jumps at a brink
+        t++; player.invuln = 5; if (player.onGround && ((t % 25 === 0 && groundBelow(player.x + 50, player.y) && groundBelow(player.x + 66, player.y)) || !groundBelow(player.x + 5, player.y) || player.hitWall)) pressed.jump = true;   // hops as it goes (never blind into a pit), and always jumps at a brink or a step
         for (const en of enemies) if (!en.dead && t % 40 === 0) { en.invuln = 0; kill(en, 1); }
         keys.right = true; step();
       }
@@ -893,7 +893,7 @@ window.__results10 = null;
   ok('high on the climb foes react sooner, wind up quicker and move faster', E.T !== B && E.T.reaction < B.reaction && E.T.tell < B.tell && E.T.speed > B.speed && E.T.aggr > B.aggr, E.type + ' tell ' + B.tell + '->' + E.T.tell + ' react ' + B.reaction + '->' + E.T.reaction);
   ok('...but the wind-up never becomes unreadable', Object.keys(TYPES).every(t => { zi = ZONES.length - 1; const x = makeFighter(0, GROUND, 'enemy', t); scaleFoe(x); return !TYPES[t].tell || x.T.tell >= 12; })); zi = 10;
   ok('...and the book of foes itself is unchanged', JSON.stringify(TYPES) === snap);
-  ok('more of them come at you', q10 === ZONES[10].enemies.length + 2 && zoneMax() === ZONES[10].max + 1, 'queue ' + q10);
+  ok('one more comes at you, but never more at once', q10 === ZONES[10].enemies.length + 1 && zoneMax() === ZONES[10].max, 'queue ' + q10);
   newGame(3); ok('...but not yet on the lower landings', queue.length === ZONES[3].enemies.length && zoneMax() === ZONES[3].max);
   const wz = ZONES.findIndex(z => z.enemies.includes('warden')); newGame(wz); const qw = queue.length; until(() => enemies.length);
   ok('bosses stand alone and grow tougher', qw === 1 && enemies[0].T.boss && enemies[0].hp === TYPES.warden.hp + Math.floor(wz / 8), 'hp ' + enemies[0].hp);
@@ -1033,10 +1033,63 @@ window.__results11 = null;
   // ---------- a longer climb, a bigger build ----------
   err = ''; try { newGame(0); queue = []; enemies = []; lastPickZone = 99; run(5); give(Object.fromEntries(RELICS.slice(0, 23).map((r, k) => [r.id, 1 + k % 2]))); render(); keys.build = true; render(); keys.build = false; state = 'win'; winT = 100; render(); state = 'play'; } catch (x) { err = x.message; }
   ok('a twenty-three relic build fits the HUD, the sheet and the win screen', !err && 18 + 23 * 22 < W * S * 0.6 && 23 * 32 < W * S, err);
-  newGame(ZONES.length - 2); ok('extra foes stop at three a landing', Math.min(3, Math.floor(threat() / 5)) === 3 && queue.length === 1);
-  newGame(zoneOf('The Ossuary')); ok('...even at the top', queue.length === ZONES[zi].enemies.length + 3, 'queue ' + queue.length);
+  newGame(ZONES.length - 2); ok('extra foes stop at two a landing', extraFoes() === 2 && queue.length === 1);
+  newGame(zoneOf('The Ossuary')); ok('...even at the top', queue.length === ZONES[zi].enemies.length + 2, 'queue ' + queue.length);
   ok('progress pips still fit', 18 + ZONES.length * 17 < W * S / 2);
 
   window.aiInput = origAI; keys.build = false; keys.right = false; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
   window.__results11 = R.join('\n');
+})();
+
+// ===== a duel, not a brawl: foes take turns, throwers share the air, a breath between arrivals (appended) =====
+window.__results12 = null;
+(async () => {
+  for (let i = 0; i < 3400 && !window.__results11; i++) await new Promise(r => setTimeout(r, 100));
+  buildsOn = true;
+  const R = []; const ok = (n, c, info = '') => R.push((c ? 'PASS ' : 'FAIL ') + n + (info ? '  [' + info + ']' : ''));
+  const clearP = () => { for (const k in pressed) pressed[k] = false; };
+  const zoneOf = name => ZONES.findIndex(z => z.name === name);
+  const busy = e => !e.dead && (e.prep > 0 || e.windup > 0 || e.lunge > 0 || e.slash > 0);
+  // stand still (invulnerable, guard at mid) and let a landing play out around you; foes cannot die either
+  const watch = (name, frames, each, px = 150) => {   // px: a spot on open floor, with no ledge overhead for a foe to perch on
+    newGame(zoneOf(name)); clearP(); keys.right = keys.left = keys.attack = false; player.x = zi * ZW + px;
+    for (let i = 0; i < frames; i++) { player.invuln = 9999; player.armed = true; for (const e of enemies) e.invuln = 9999; step(); slowmo = 0; each(i); }
+  };
+
+  let most = 0; watch('The Throne Gallery', 2400, () => { most = Math.max(most, enemies.filter(e => !e.dead).length); });
+  ok('high on the climb, never more than two foes on the landing at once', most <= 2 && threat() >= 19, 'most ' + most + ' threat ' + threat());
+  ok('...and at most two extra foes a landing', extraFoes() <= 2 && queue.length + enemies.length <= ZONES[zi].enemies.length + 2);
+
+  for (const [nm, px] of [['The Throne Gallery', 150], ['The Ossuary', 150], ["The Founders' Anvil", 40], ['The Drowned Choir', 150]]) {
+    let atk = 0, both = 0, far = 0, farN = 0;
+    watch(nm, 2400, () => {
+      const up = enemies.filter(e => !e.dead);
+      const b = up.filter(busy).length; if (b) atk++; if (b >= 2) both++;
+      if (up.length === 2 && up.every(e => e.armed && !e.entering && e.onGround)) for (const e of up) if (e !== leadFoe) { far += Math.abs(e.x - player.x); farN++; }
+    }, px);
+    ok(nm + ': only one foe attacks at a time', atk > 40 && both <= atk * 0.04, 'attack frames ' + atk + ', two at once ' + both);
+    ok(nm + ': the other waits his turn out of reach', !farN || far / farN > 50, 'waits at ' + (farN ? (far / farN).toFixed(0) : '-'));
+  }
+
+  let inAir = 0, gaps = [], last = -1, nThrows = 0;
+  watch('The Rookery', 3000, i => {
+    const fp = projs.filter(q => q.team !== 'player');
+    inAir = Math.max(inAir, fp.length);
+    for (const q of fp) if (!q.seen) { q.seen = true; nThrows++; if (last >= 0) gaps.push(i - last); last = i; }
+  });
+  ok('throwers take turns: never two foe blades in the air', inAir <= 1 && nThrows >= 1, 'most ' + inAir + ', throws ' + nThrows);
+  ok('...with a pause between one throw and the next', gaps.every(g => g >= 145), 'gaps ' + gaps.join(','));
+  let clash = 0, thrown = 0; watch('The Rookery', 3000, () => { for (const q of projs) if (q.team !== 'player' && !q.seen2) { q.seen2 = true; thrown++; if (leadFoe && busy(leadFoe)) clash++; } });
+  ok('...and no blade is thrown at you while the foe in front is mid-attack', thrown >= 1 && clash === 0, thrown + ' thrown, ' + clash + ' during an attack');
+
+  newGame(zoneOf('The Throne Gallery')); clearP(); player.x = zi * ZW + 60;
+  let n = 0; while (enemies.filter(e => !e.dead).length < 2 && n < 900) { player.invuln = 9999; step(); n++; }
+  const first = leadFoe, heir = enemies.find(e => !e.dead && e !== first); first.hp = 1; kill(first, 1); let back = 0;   // an elite would only be wounded
+  while (enemies.filter(e => !e.dead).length < 2 && back < 400) { player.invuln = 9999; step(); slowmo = 0; back++; }
+  ok('a breath before the next foe arrives', back >= 45 && back < 60, back + ' frames');
+  let stepIn = -1; for (let i = 0; i < 600 && heir; i++) { player.invuln = 9999; player.armed = true; for (const e of enemies) e.invuln = 9999; step(); slowmo = 0; if (stepIn < 0 && leadFoe === heir && busy(heir)) stepIn = i; }
+  ok('when the foe in front falls, the one waiting steps in and attacks', stepIn >= 0, 'stepped in after ' + stepIn);
+
+  keys.right = false; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
+  window.__results12 = R.join('\n');
 })();
