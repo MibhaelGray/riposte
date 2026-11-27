@@ -4,7 +4,9 @@ A one-hit-kill sword-duel platformer that runs in the browser. Climb 24 landings
 
 ## Play
 
-You need Python 3 (macOS already has it). In this folder, run:
+**Play it in your browser: <https://mibhaelgray.github.io/riposte/>** (keyboard needed).
+
+To run it on your own computer instead, you need Python 3 (macOS already has it). In this folder, run:
 
 ```bash
 python3 serve.py 8123
