@@ -12,6 +12,9 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="game.js"></script>
+<script>
+  // load the newest game.js every time, never a cached copy
+  document.body.appendChild(Object.assign(document.createElement('script'), { src: 'game.js?v=' + Date.now() }));
+</script>
 </body>
 </html>
