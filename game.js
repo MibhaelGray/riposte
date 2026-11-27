@@ -302,7 +302,7 @@ const RELICS = [
   { id: 'spare', tier: 1, name: 'Spare Blade', desc: n => `Begin every landing with a second blade. A fresh one after every ${SPARE_EVERY[Math.min(n, 4) - 1]} kills.` },
   { id: 'lodestone', tier: 1, name: 'Lodestone', desc: n => `Your thrown blade (K) flies back to your hand${n > 1 ? ', ' + (n - 1) * 20 + '% faster' : ''}.` },
   { id: 'ghost', tier: 1, name: 'Ghost Blade', max: 4, desc: n => `Left unarmed, a new blade forms in your hand after ${secs(Math.max(45, 150 - 35 * (n - 1)))}.` },
-  { id: 'shadow', tier: 1, name: 'Shadow Step', desc: n => `Nothing can touch you for the first ${secs(8 + 4 * (n - 1))} of a back-step, roll or air dash.` },
+  { id: 'shadow', tier: 1, name: 'Shadow Step', desc: n => `Nothing can touch you for the first ${secs(8 + 4 * (n - 1))} of a back-step or air dash, or just after a roll.` },
   { id: 'wing', tier: 1, name: "Crow's Wing", desc: n => `Jump ${n === 1 ? 'once' : n === 2 ? 'twice' : n + ' times'} more in mid-air.` },
   { id: 'thunder', tier: 1, name: 'Thunder Riposte', desc: n => `A kill with a riposte sends out a shock that stuns foes ${n > 1 ? 'in a ' + (n - 1) * 30 + '% wider ring' : 'nearby'}.` },
   { id: 'meteor', tier: 1, name: 'Meteor Plunge', desc: n => `Your plunge (DOWN + J in the air) lands with a shockwave ${n * 55}% wider and longer.` },
@@ -401,7 +401,8 @@ function scaleFoe(e) {
 // ---------- game state ----------
 let state = 'title';
 let zi = 0, cleared = false, queue = [], spawnT = 0;
-let leadFoe = null, foeThrowT = 0, lastAlive = 0;   // one foe presses the fight at a time; the rest wait their turn
+let leadFoe = null, foeThrowT = 0, lastAlive = 0;
+let downTapT = 0, downTapStance = 1;   // double-tap DOWN to drop through a ledge   // one foe presses the fight at a time; the rest wait their turn
 let player = null, enemies = [], swords = [], projs = [], parts = [], loot = [];
 let props = [];   // pots, stools, bottles, skulls and lanterns lying about: press E beside one to hurl it at the nearest foe
 // ---- cosmetics looted from fallen foes (kept between runs) ----
@@ -724,6 +725,7 @@ function dropSword(f, dir, vy = -2.8) {
 }
 function kill(f, dir) {
   if (f.dead || f.invuln > 0) return;
+  if (f === player && f.roll > 0) return;     // a roll carries you under and through every blow
   if (f.offhand) { // the second blade takes the blow and is knocked away
     f.offhand = false; f.invuln = 40; f.stun = 14; f.vx = dir * 2.6; clearActions(f);
     swords.push({ x: f.x, y: f.y - 10, vx: dir * rnd(1, 2), vy: -3.4, onGround: false, age: 0 });
@@ -958,7 +960,7 @@ function control(f, inp) {
   if (f.stun > 0) { f.stun--; f.vx *= 0.85; return; }
   if (f.down > 0) { f.down--; f.vx *= 0.85; return; }
   if (f.over > 0) { f.over--; f.vx *= 0.8; return; }                                   // overextended after a thrust that found nothing: wide open
-  if (f.roll > 0) { f.roll--; f.vx = f.rollDir * 2.3; return; }
+  if (f.roll > 0) { f.roll--; f.vx = f.rollDir * 2.3; if (f.roll === 0 && f.shadowAfter) { f.shadowAfter = false; shadowStep(f); } return; }
   if (f.hop > 0) { f.hop--; f.vx = -f.facing * (f.hop > 3 ? 2.6 : 1.1); return; }      // quick hop back, blade still up
   if (f.kick) { if (f.onGround) { f.kick = false; f.stun = 6; } return; }
   if (f.plunge) { if (f.onGround) { f.plunge = false; plungeLand(f); } return; }
@@ -997,7 +999,7 @@ function control(f, inp) {
     clearActions(f); f.hop = 9; f.rollCd = isP ? Math.round(22 * 0.82 ** rel('spring')) : 40; f.did = true; sfx.hop(); dust(f.x, f.y, 3); if (isP) shadowStep(f); return;
   }
   if (inp.rollP && f.rollCd <= 0 && (isP || f.cool <= 0)) {
-    if (f.onGround) { f.roll = 16; f.rollDir = move || f.facing; f.rollCd = isP ? Math.round(28 * 0.82 ** rel('spring')) : 28; if (!isP) f.cool = 12; clearActions(f); f.did = true; sfx.swish(); if (isP) shadowStep(f); return; }
+    if (f.onGround) { f.roll = 16; f.rollDir = move || f.facing; f.rollCd = isP ? Math.round(28 * 0.82 ** rel('spring')) : 28; if (!isP) f.cool = 12; clearActions(f); f.did = true; sfx.swish(); if (isP && rel('shadow')) f.shadowAfter = true; return; }
     if (!f.airDashed) { f.dash = 10; f.dashDir = move || f.facing; f.airDashed = true; f.rollCd = isP ? Math.round(18 * 0.82 ** rel('spring')) : 18; if (!isP) f.cool = 8; f.lunge = 0; f.did = true; sfx.swish(); if (isP) shadowStep(f); return; }
   }
   // every thrust is drawn back before it flies. Yours is quick (hold J to keep it drawn: a feint); a foe's is long
@@ -1038,6 +1040,9 @@ function control(f, inp) {
 // ---------- AI ----------
 // a duel, not a brawl: only the foe nearest you presses the attack. The others hold off at a distance,
 // keep their guard up, and step in when the one in front of you falls, loses his blade or is left behind.
+// standing on a thin ledge, gallery or hanging plank (not stone): something you can drop through
+function onThinPlatform(f) { return f.onGround && !solidAt(f.x, f.y + 1) && platforms.some(q => Math.abs(q.y - f.y) < 1 && f.x > q.x - 3 && f.x < q.x + q.w + 3); }
+function dropThrough(f) { f.y += 1; f.onGround = false; f.vy = 0.6; dust(f.x, f.y, 4); }
 function pickLead() {
   const live = enemies.filter(e => !e.dead && !e.T.dummy && !e.T.drill);
   if (live.length < 2) { leadFoe = live[0] || null; return; }
@@ -1154,8 +1159,7 @@ function aiInput(e) {
     if (dist > target + 3) move = dir; else if (dist < target - 3) move = -dir;
     if (!waiting && e.onGround && p.onGround && p.y - e.y > 8 && dist >= 12 && dist < 70) move = dir;   // on a ledge above you: come down to fight, not hover out of reach
     // standing on a gallery right over your head: drop through it to your floor
-    if (!waiting && e.onGround && p.onGround && p.y - e.y > 8 && dist < 40 && Math.random() < 0.04 && !solidAt(e.x, e.y + 1) &&
-        platforms.some(q => Math.abs(q.y - e.y) < 1 && e.x > q.x && e.x < q.x + q.w)) { e.y += 1; e.onGround = false; e.vy = 0.5; return inp; }
+    if (!waiting && p.onGround && p.y - e.y > 8 && dist < 40 && Math.random() < 0.04 && onThinPlatform(e)) { dropThrough(e); return inp; }
 
     // just parried: a trained blade tries to parry the riposte it knows is coming. Strike at once and it is too
     // late for them; hesitate and they catch it (or wait out their parry and then strike).
@@ -1338,6 +1342,12 @@ function stepPlay() {
   player.did = false; const wasGround = player.onGround;
   if (pressed.grab && !player.dead && player.stun <= 0 && player.down <= 0 && player.roll <= 0 && !player.kick && !player.plunge) { const np = nearProp(player); if (np) hurlProp(np); }
   if (player.fling > 0) player.fling--;
+  // tap DOWN twice to drop through the ledge you stand on; the guard you held before the first tap is kept
+  if (downTapT > 0) downTapT--;
+  if (pressed.down && !player.dead) {
+    if (downTapT > 0 && onThinPlatform(player) && player.stun <= 0 && player.down <= 0 && player.roll <= 0) { dropThrough(player); player.stance = downTapStance; pin.downP = false; downTapT = 0; }
+    else { downTapT = 16; downTapStance = player.stance; }
+  }
   control(player, pin);
   if (player.did || player.dead) bufAct = null; else if (bufAct && --bufT <= 0) bufAct = null;
   if (bufJump > 0) { bufJump--; if (wasGround && !player.onGround) bufJump = 0; }
@@ -1423,7 +1433,7 @@ function stepPlay() {
     }
     const targets = p.team === 'player' ? enemies : [player];
     for (const t of targets) {
-      if (t.dead || p.done) continue;
+      if (t.dead || p.done || (t === player && t.roll > 0)) continue;   // a blade flies on over a rolling player
       const bb = bodyBox(t);
       const hit = (pointIn(p.x, p.y, bb) || pointIn(p.x - p.vx / 2, p.y, bb));
       if (!hit) continue;
@@ -3115,7 +3125,7 @@ const CONTROL_LINES = [
   ['← →  or  A D   move', '↑ ↓  or  W S   raise / lower your blade'],
   ['J   thrust · hold to feint, W S switches line', 'U   slash (breaks any guard, short reach)'],
   ['L   heavy lunge (disarms a blade, kills past it)', 'O   parry, then J at once to riposte'],
-  ['SPACE   jump · in air: ↓ + J plunge', 'SHIFT   hop back · with A D: roll · in air: dash'],
+  ['SPACE jump · S S drop down · air ↓+J plunge', 'SHIFT  hop back · +A D: roll (untouchable)'],
   ['K   throw your blade', 'walk over a loose sword to wield two'],
   ['E   hurl a nearby pot, stool or lantern', 'a hit stuns: close in and finish it'],
   ['unarmed:  J punch · midair J dive-kick', 'unarmed:  hold S duck · hold W rise'],

@@ -1093,3 +1093,49 @@ window.__results12 = null;
   keys.right = false; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
   window.__results12 = R.join('\n');
 })();
+
+// ===== rolls are untouchable; double-tap DOWN drops through a ledge (appended) =====
+window.__results13 = null;
+(async () => {
+  for (let i = 0; i < 3400 && !window.__results12; i++) await new Promise(r => setTimeout(r, 100));
+  buildsOn = true;
+  const R = []; const ok = (n, c, info = '') => R.push((c ? 'PASS ' : 'FAIL ') + n + (info ? '  [' + info + ']' : ''));
+  const run = n => { for (let i = 0; i < n; i++) step(); };
+  const clearP = () => { for (const k in pressed) pressed[k] = false; };
+  const press = k => { pressed[k] = true; step(); clearP(); };
+  const zoneOf = name => ZONES.findIndex(z => z.name === name);
+  const calm = () => { slowmo = 0; fin = null; freeze = 0; };
+  const solo = (o = {}) => { newGame(0); queue = []; enemies = []; lastPickZone = 99; run(5); clearP(); keys.right = keys.left = keys.attack = keys.down = false; relics = Object.assign({}, o); relicOrder = Object.keys(o); player.x += 80; player.invuln = 0; player.rollCd = 0; };
+  const origAI = aiInput;
+
+  solo(); keys.right = true; press('roll'); keys.right = false;
+  const rolling = player.roll > 0; kill(player, 1); calm();
+  ok('a roll cannot be touched', rolling && !player.dead, 'roll ' + player.roll);
+  run(20); kill(player, 1); calm(); ok('...but once it ends you can be', player.dead);
+
+  solo(); window.aiInput = () => ({});
+  const e = makeFighter(player.x + 60, GROUND, 'enemy', 'thrower'); e.onGround = true; e.facing = -1; enemies.push(e);
+  keys.right = true; press('roll'); keys.right = false;
+  projs.push({ x: player.x + 10, y: stanceY(player) - 2, vx: -5.5, team: 'enemy', life: 80 }); const q = projs[projs.length - 1];
+  run(6); ok('a thrown blade flies on over a rolling player', !player.dead && !q.done && q.x < player.x, 'blade at ' + (q.x - player.x).toFixed(0) + ', dead ' + player.dead);
+  window.aiInput = origAI;
+
+  solo({ shadow: 1 }); keys.right = true; press('roll'); keys.right = false; const during = player.invuln;
+  run(20); ok('Shadow Step now guards you just after the roll ends', during <= 0 && player.roll <= 0 && player.invuln > 0, 'during ' + during + ', after ' + player.invuln);
+
+  // the gallery in the Drowned Choir is a thin ledge over open floor
+  const onGallery = () => { newGame(zoneOf('The Drowned Choir')); queue = []; enemies = []; clearP(); keys.down = false; player.x = zi * ZW + 150; player.y = 120; player.vy = 0; player.onGround = true; run(3); };
+  onGallery(); const st = player.stance;
+  press('down'); run(3); press('down'); run(30);
+  ok('tap DOWN twice on a ledge to drop through it', player.onGround && player.y === GROUND, 'y ' + player.y);
+  ok('...and you keep the guard you held', player.stance === st, 'stance ' + st + ' -> ' + player.stance);
+  onGallery(); press('down'); run(40);
+  ok('a single tap only lowers your guard', player.y === 120 && player.stance === Math.min(2, st + 1), 'y ' + player.y);
+  onGallery(); press('down'); run(25); press('down'); run(30);
+  ok('taps too far apart do not drop you', player.y === 120, 'y ' + player.y);
+  newGame(0); queue = []; enemies = []; run(3); clearP(); press('down'); run(2); press('down'); run(20);
+  ok('stone floor does not let you through', player.y === GROUND && !player.dead, 'y ' + player.y);
+
+  keys.right = keys.down = false; newGame(0); state = 'title'; localStorage.removeItem('riposte.wardrobe');
+  window.__results13 = R.join('\n');
+})();

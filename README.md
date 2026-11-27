@@ -21,13 +21,14 @@ Then open <http://localhost:8123>.
 | A / D or ← / → | Move |
 | W / S or ↑ / ↓ | Raise / lower your guard (high, mid, low) |
 | Space or Z | Jump (DOWN + J in the air plunges) |
+| S S (tap DOWN twice) | Drop through the ledge you're standing on |
 | J or X | Thrust (hold to feint) |
 | U | Slash |
 | L or I | Heavy lunge |
 | O | Parry. Answer with J for the riposte |
 | K or C | Throw your sword |
 | E or F | Hurl a nearby pot, bottle, skull, stool or lantern |
-| Shift or V | Back-step (with a direction: roll) |
+| Shift or V | Back-step (with a direction: roll, which nothing can touch) |
 | Tab (hold) | Show your build |
 | 1 / 2 / 3 | Pick a relic |
 | Esc or P | Pause |
